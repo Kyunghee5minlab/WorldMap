@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>지구본 — 110m 경계 + 수도</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      body { background:#0b1b2b; color:#eaf2ff; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+      .wrap { display:grid; place-items:center; height:100%; padding: 12px; box-sizing: border-box; }
+      .card { background:#0e2438; border:1px solid #143a5a; border-radius:12px; padding:12px; width:min(100%, 980px); box-shadow:0 12px 32px rgba(0,0,0,0.35); }
+      .head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+      .title { font-weight:700; color:#def; }
+      .meta { font-size:12px; color:#9fc1ff; opacity:0.85; }
+      .stage { position:relative; }
+      canvas { display:block; width:100%; height:auto; background: radial-gradient(1200px 600px at 50% 50%, #0f2a45, #0a1a2b 70%); border-radius: 10px; }
+      .hud { position:absolute; inset: 8px auto auto 8px; background: rgba(7,18,28,0.7); border: 1px solid #173a5a; border-radius: 8px; padding:8px 10px; font-size: 13px; pointer-events:none; min-width: 220px; }
+      .hint { margin-top:8px; font-size: 12px; color:#a8c8ff; opacity:0.85; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <div class="head">
+          <div class="title">지구본 (110m 경계 · 드래그 회전 · 휠 줌 · 수도 ★)</div>
+          <div class="meta">경계: 110m · 지형 채움 없음</div>
+        </div>
+        <div class="stage">
+          <canvas id="globe" width="900" height="900" aria-label="110m 국가 경계와 수도 표시 지구본" role="img"></canvas>
+          <div id="hud" class="hud">좌클릭: 국가 선택 · 휠: 확대/축소</div>
+        </div>
+        <div class="hint">데이터: world-atlas 110m(경계), mledoze/countries(수도)</div>
+      </div>
+    </div>
+
+    <script>
+      // Canvas + projection
+      const canvas = document.getElementById('globe');
+      const ctx = canvas.getContext('2d');
+      const DPR = Math.max(1, window.devicePixelRatio || 1);
+      let needsRender = true;
+
+      function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.max(2, Math.round(rect.width * DPR));
+        canvas.height = canvas.width;
+        needsRender = true;
+      }
+
+      const projection = d3.geoOrthographic().scale(1).translate([0,0]).clipAngle(90).precision(0.3);
+      const path = d3.geoPath(projection, ctx);
+
+      // Style
+      const colors = {
+        ocean: '#0b4da2',
+        graticule: 'rgba(160,200,255,0.15)',
+        boundary: '#9e9e9e',
+        selectedFill: 'rgba(46, 141, 239, 0.45)',
+        selectedEdge: '#bfe1ff',
+        capital: '#ffd166',
+        capitalEdge: '#ffffff'
+      };
+
+      const graticule = d3.geoGraticule10();
+
+      // Data state
+      let features = []; // 110m country polygons (GeoJSON Feature[]), id = ISO_N3
+      let boundaryMesh = null; // 110m boundaries (MultiLineString)
+      let landGeom = null; // 110m land (MultiPolygon) for coastline only
+      let capitals = []; // { name, ccn3, lat, lon }
+      const capByCcn3 = new Map();
+      const nameByCcn3 = new Map();
+
+      // Interaction state
+      let selected = null; // Feature
+      let isDragging = false;
+      let lastPos = [0,0];
+      let lastRotate = [0,0,0];
+      let moved = false;
+
+      // Zoom: at 2x, drag speed should be 1/2 => sens ~ 1/zoom^k (k = 1)
+      let zoom = 1;
+      const ZOOM_MIN = 0.5, ZOOM_MAX = 6, ZOOM_RESP = 0.0016;
+      const DRAG_EXP = 1; // 2^1 = 2 -> speed 1/2 at 2x
+
+      function fitProjection() {
+        const w = canvas.width, h = canvas.height;
+        const scale = Math.min(w,h) * 0.47 * zoom;
+        projection.translate([w/2, h/2]).scale(scale);
+      }
+
+      function clear() {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = colors.ocean;
+        ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+      }
+
+      function drawGraticule() {
+        ctx.beginPath();
+        path(graticule);
+        ctx.strokeStyle = colors.graticule;
+        ctx.lineWidth = 1 * DPR;
+        ctx.stroke();
+      }
+
+      // Fill land in black (no terrain detail, just solid fill)
+      function drawLandFill() {
+        if (!landGeom) return;
+        ctx.beginPath();
+        path(landGeom);
+        ctx.fillStyle = '#000000';
+        ctx.fill();
+      }
+
+      function drawBoundaries() {
+        ctx.beginPath();
+        if (boundaryMesh) {
+          path(boundaryMesh);
+        } else if (features && features.length) {
+          // fallback: stroke all country outlines
+          features.forEach(f => path(f));
+        } else {
+          return;
+        }
+        ctx.strokeStyle = colors.boundary;
+        ctx.lineWidth = 0.9 * DPR;
+        ctx.stroke();
+      }
+
+      function drawCoastline() {
+        if (!landGeom) return;
+        ctx.beginPath();
+        path(landGeom);
+        ctx.strokeStyle = '#4a7fb5'; // darker coastline
+        ctx.lineWidth = 1.2 * DPR;
+        ctx.stroke();
+      }
+
+      function drawSelection() {
+        if (!selected) return;
+        ctx.save();
+        // fill
+        ctx.beginPath();
+        path(selected);
+        ctx.fillStyle = colors.selectedFill;
+        ctx.fill();
+        // edge using 110m mesh clipped to selection
+        ctx.beginPath();
+        path(selected);
+        ctx.clip();
+        ctx.beginPath();
+        path(boundaryMesh);
+        ctx.strokeStyle = colors.selectedEdge;
+        ctx.lineWidth = 2 * DPR;
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Star path helper for capitals
+      function drawStarPath(cx, cy, outer, inner, points=5) {
+        const step = Math.PI / points;
+        ctx.beginPath();
+        for (let i=0; i<points*2; i++) {
+          const r = (i % 2 === 0) ? outer : inner;
+          const a = i * step - Math.PI/2;
+          const x = cx + r*Math.cos(a);
+          const y = cy + r*Math.sin(a);
+          if (i === 0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        }
+        ctx.closePath();
+      }
+
+      function drawCapitals() {
+        ctx.save();
+        capitals.forEach(c => {
+          const p = projection([c.lon, c.lat]);
+          if (!p) return;
+          const [x,y] = p;
+          // size scales gently with zoom, clamped for readability
+          const outer = Math.max(3*DPR, Math.min(7*DPR, 4*DPR * Math.sqrt(zoom)));
+          const inner = outer * 0.5;
+          drawStarPath(x, y, outer, inner, 5);
+          ctx.fillStyle = colors.capital;      // gold fill
+          ctx.strokeStyle = colors.capitalEdge;// white edge
+          ctx.lineWidth = Math.max(0.8*DPR, outer*0.25);
+          ctx.fill();
+          ctx.stroke();
+        });
+        ctx.restore();
+      }
+
+      function render() {
+        fitProjection();
+        clear();
+        drawGraticule();
+        drawLandFill();
+        drawBoundaries();
+        drawCoastline();
+        drawSelection();
+        drawCapitals();
+      }
+
+      function loop() {
+        if (needsRender) { render(); needsRender = false; }
+        requestAnimationFrame(loop);
+      }
+
+      // Events
+      function setHud(text){ document.getElementById('hud').textContent = text; }
+
+      canvas.addEventListener('mousedown', (ev) => {
+        if (ev.button !== 0) return;
+        isDragging = true; moved = false;
+        lastPos = [ev.clientX, ev.clientY];
+        lastRotate = projection.rotate();
+        ev.preventDefault();
+      });
+
+      window.addEventListener('mousemove', (ev) => {
+        if (!isDragging) return;
+        const dx = ev.clientX - lastPos[0];
+        const dy = ev.clientY - lastPos[1];
+        if (Math.abs(dx)+Math.abs(dy) > 2) moved = true;
+        const baseSens = 0.30; // at zoom=1
+        const sens = baseSens / Math.pow(zoom, DRAG_EXP); // 2x -> 1/2
+        const r = [ lastRotate[0] + dx * sens, lastRotate[1] - dy * sens, lastRotate[2] ];
+        r[1] = Math.max(-89.9, Math.min(89.9, r[1]));
+        projection.rotate(r);
+        needsRender = true;
+      });
+
+      window.addEventListener('mouseup', () => { isDragging = false; });
+
+      canvas.addEventListener('wheel', (ev) => {
+        ev.preventDefault();
+        const k = Math.exp(-ev.deltaY * ZOOM_RESP);
+        zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom * k));
+        needsRender = true;
+      }, { passive: false });
+
+      canvas.addEventListener('click', (ev) => {
+        if (ev.button !== 0) return;
+        if (moved) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = (ev.clientX - rect.left) * DPR;
+        const y = (ev.clientY - rect.top) * DPR;
+        const lonlat = projection.invert([x,y]);
+        if (!lonlat) return;
+        const f = features.find(ft => d3.geoContains(ft, lonlat));
+        selected = f || null;
+        if (selected) {
+          const id = String(selected.id || '').padStart(3,'0');
+          const propName = (selected.properties && (selected.properties.name || selected.properties.ADMIN || selected.properties.admin)) || '';
+          const name = propName || nameByCcn3.get(id) || '국가';
+          const cap = capByCcn3.get(id) || null;
+          if (cap) setHud(`${name} — 수도: ${cap.capital}`);
+          else setHud(`${name}`);
+          needsRender = true;
+          return;
+        }
+        if (selected) {
+          const id = String(selected.id || '');
+          const cap = capByCcn3.get(id) || null;
+          if (cap) setHud(`${cap.name} — 수도: ${cap.capital}`);
+          else setHud(`국가 코드 ${id}`);
+        } else {
+          setHud('좌클릭: 국가 선택 · 휠: 확대/축소');
+        }
+        needsRender = true;
+      });
+
+      // Data loading (110m only)
+      async function loadData() {
+        async function fetchWithFallback(urls) {
+          let lastErr;
+          for (const u of urls) {
+            try {
+              const r = await fetch(u, { cache: 'force-cache' });
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return await r.json();
+            } catch (e) { lastErr = e; }
+          }
+          throw lastErr || new Error('모든 소스에서 로드 실패');
+        }
+
+        const topo = await fetchWithFallback([
+          './data/countries-110m.json',
+          'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'
+        ]);
+        const landTopo = await fetchWithFallback([
+          './data/land-110m.json',
+          'https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json'
+        ]);
+        // countries: handle TopoJSON or GeoJSON
+        if (topo?.objects?.countries) {
+          features = topojson.feature(topo, topo.objects.countries).features;
+          boundaryMesh = topojson.mesh(topo, topo.objects.countries, (a,b)=>a!==b);
+        } else if (Array.isArray(topo?.features)) {
+          features = topo.features;
+          boundaryMesh = null; // will fallback to stroking features
+        } else {
+          throw new Error('countries data not found');
+        }
+        if (landTopo?.objects?.land) {
+          landGeom = topojson.feature(landTopo, landTopo.objects.land);
+        } else if (landTopo?.type === 'FeatureCollection') {
+          // accept GeoJSON as-is
+          landGeom = landTopo;
+        }
+
+        const rows = await fetchWithFallback([
+          './data/countries.json',
+          'https://cdn.jsdelivr.net/gh/mledoze/countries@master/countries.json',
+          'https://raw.githubusercontent.com/mledoze/countries/master/countries.json'
+        ]);
+        capitals = [];
+        rows.forEach(row => {
+          const ccn3 = row.ccn3 || '';
+          const name = row.name?.common || row.name?.official || '';
+          const capName = Array.isArray(row.capital) ? row.capital[0] : row.capital;
+          const ll = row.capitalInfo && Array.isArray(row.capitalInfo.latlng) ? row.capitalInfo.latlng : null;
+          if (ccn3) {
+            const id3 = String(ccn3).padStart(3,'0');
+            if (name) nameByCcn3.set(id3, name);
+            if (capName && ll && ll.length===2) {
+              const cap = { name, capital: capName, ccn3: id3, lat:+ll[0], lon:+ll[1] };
+              capitals.push(cap);
+              capByCcn3.set(id3, cap);
+            }
+          }
+        });
+
+        resizeCanvas();
+        needsRender = true;
+        setHud('좌클릭: 국가 선택 · 휠: 확대/축소');
+      }
+
+      window.addEventListener('resize', resizeCanvas);
+      resizeCanvas();
+      // start loop immediately so background/UI renders even if data fails
+      requestAnimationFrame(loop);
+      setHud('데이터 불러오는 중...');
+      loadData().catch(err=>{
+        console.error(err);
+        setHud('데이터 로드 실패: docs/globe/data/ 폴더에 오프라인 파일을 추가하거나 네트워크를 확인하세요.');
+      });
+    </script>
+  </body>
+  </html>

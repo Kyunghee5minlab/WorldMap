@@ -1,0 +1,14 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"kind": "land"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[110,20],[140,20],[140,45],[110,45],[110,20]]]
+      }
+    }
+  ]
+}
+

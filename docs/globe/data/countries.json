@@ -1,0 +1,9 @@
+[
+  {
+    "name": { "common": "Exampleland", "official": "Exampleland" },
+    "ccn3": "410",
+    "capital": ["Example City"],
+    "capitalInfo": { "latlng": [35.0, 125.0] }
+  }
+]
+

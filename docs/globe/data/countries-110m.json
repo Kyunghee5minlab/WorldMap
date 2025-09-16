@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "410",
+      "properties": {"name": "Exampleland"},
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[120,30],[130,30],[130,40],[120,40],[120,30]]]
+      }
+    }
+  ]
+}
+
