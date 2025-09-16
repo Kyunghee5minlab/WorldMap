@@ -1,9 +1,9 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>지구본 — 110m 경계 + 수도</title>
+    <title>吏援щ낯 ??110m 寃쎄퀎 + ?섎룄</title>
     <style>
       html, body { height: 100%; margin: 0; }
       body { background:#0b1b2b; color:#eaf2ff; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
@@ -24,14 +24,14 @@
     <div class="wrap">
       <div class="card">
         <div class="head">
-          <div class="title">지구본 (110m 경계 · 드래그 회전 · 휠 줌 · 수도 ★)</div>
-          <div class="meta">경계: 110m · 지형 채움 없음</div>
+          <div class="title">吏援щ낯 (110m 寃쎄퀎 쨌 ?쒕옒洹??뚯쟾 쨌 ??以?쨌 ?섎룄 ??</div>
+          <div class="meta">寃쎄퀎: 110m 쨌 吏??梨꾩? ?놁쓬</div>
         </div>
         <div class="stage">
-          <canvas id="globe" width="900" height="900" aria-label="110m 국가 경계와 수도 표시 지구본" role="img"></canvas>
-          <div id="hud" class="hud">좌클릭: 국가 선택 · 휠: 확대/축소</div>
+          <canvas id="globe" width="900" height="900" aria-label="110m 援?? 寃쎄퀎? ?섎룄 ?쒖떆 吏援щ낯" role="img"></canvas>
+          <div id="hud" class="hud">醫뚰겢由? 援?? ?좏깮 쨌 ?? ?뺣?/異뺤냼</div>
         </div>
-        <div class="hint">데이터: world-atlas 110m(경계), mledoze/countries(수도)</div>
+        <div class="hint">?곗씠?? world-atlas 110m(寃쎄퀎), mledoze/countries(?섎룄)</div>
       </div>
     </div>
 
@@ -181,8 +181,7 @@
           if (!p) return;
           const [x,y] = p;
           // size scales gently with zoom, clamped for readability
-          const outer = Math.max(3*DPR, Math.min(7*DPR, 4*DPR * Math.sqrt(zoom)));
-          const inner = outer * 0.5;
+          const outer = 50*DPR; const inner = 25*DPR;
           drawStarPath(x, y, outer, inner, 5);
           ctx.fillStyle = colors.capital;      // gold fill
           ctx.strokeStyle = colors.capitalEdge;// white edge
@@ -211,7 +210,6 @@
 
       // Events
       function setHud(text){ document.getElementById('hud').textContent = text; }
-
       canvas.addEventListener('mousedown', (ev) => {
         if (ev.button !== 0) return;
         isDragging = true; moved = false;
@@ -242,12 +240,12 @@
         needsRender = true;
       }, { passive: false });
 
-      canvas.addEventListener('click', (ev) => {
-        if (ev.button !== 0) return;
-        if (moved) return;
+      canvas.addEventListener('mousemove', (ev) => {
         const rect = canvas.getBoundingClientRect();
-        const x = (ev.clientX - rect.left) * DPR;
-        const y = (ev.clientY - rect.top) * DPR;
+        const xCss = ev.clientX - rect.left;
+        const yCss = ev.clientY - rect.top;
+        const x = xCss * DPR;
+        const y = yCss * DPR;
         const lonlat = projection.invert([x,y]);
         if (!lonlat) return;
         const f = features.find(ft => d3.geoContains(ft, lonlat));
@@ -255,9 +253,9 @@
         if (selected) {
           const id = String(selected.id || '').padStart(3,'0');
           const propName = (selected.properties && (selected.properties.name || selected.properties.ADMIN || selected.properties.admin)) || '';
-          const name = propName || nameByCcn3.get(id) || '국가';
+          const name = propName || nameByCcn3.get(id) || '援??';
           const cap = capByCcn3.get(id) || null;
-          if (cap) setHud(`${name} — 수도: ${cap.capital}`);
+          if (cap) setHud(`${name} ???섎룄: ${cap.capital}`);
           else setHud(`${name}`);
           needsRender = true;
           return;
@@ -265,10 +263,10 @@
         if (selected) {
           const id = String(selected.id || '');
           const cap = capByCcn3.get(id) || null;
-          if (cap) setHud(`${cap.name} — 수도: ${cap.capital}`);
-          else setHud(`국가 코드 ${id}`);
+          if (cap) setHud(`${cap.name} ???섎룄: ${cap.capital}`);
+          else setHud(`援?? 肄붾뱶 ${id}`);
         } else {
-          setHud('좌클릭: 국가 선택 · 휠: 확대/축소');
+          setHud('醫뚰겢由? 援?? ?좏깮 쨌 ?? ?뺣?/異뺤냼');
         }
         needsRender = true;
       });
@@ -284,7 +282,7 @@
               return await r.json();
             } catch (e) { lastErr = e; }
           }
-          throw lastErr || new Error('모든 소스에서 로드 실패');
+          throw lastErr || new Error('紐⑤뱺 ?뚯뒪?먯꽌 濡쒕뱶 ?ㅽ뙣');
         }
 
         const topo = await fetchWithFallback([
@@ -336,18 +334,20 @@
 
         resizeCanvas();
         needsRender = true;
-        setHud('좌클릭: 국가 선택 · 휠: 확대/축소');
+        setHud('醫뚰겢由? 援?? ?좏깮 쨌 ?? ?뺣?/異뺤냼');
       }
 
       window.addEventListener('resize', resizeCanvas);
       resizeCanvas();
       // start loop immediately so background/UI renders even if data fails
       requestAnimationFrame(loop);
-      setHud('데이터 불러오는 중...');
+      setHud('?곗씠??遺덈윭?ㅻ뒗 以?..');
       loadData().catch(err=>{
         console.error(err);
-        setHud('데이터 로드 실패: docs/globe/data/ 폴더에 오프라인 파일을 추가하거나 네트워크를 확인하세요.');
+        setHud('?곗씠??濡쒕뱶 ?ㅽ뙣: docs/globe/data/ ?대뜑???ㅽ봽?쇱씤 ?뚯씪??異붽??섍굅???ㅽ듃?뚰겕瑜??뺤씤?섏꽭??');
       });
     </script>
   </body>
   </html>
+
+
